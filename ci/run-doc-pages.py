@@ -3,10 +3,10 @@
 run-doc-pages.py
 
 Executor for docs snippets plan. This script extracts and runs shell commands
-found within special comment blocks (`[docs-exec]...`) in scripts. If no such
-[docs-exec] blocks are found in a script, return an error.
+found within special comment blocks (`[docs-exec:<name>] ... [docs-exec:<name>-end]`)
+in scripts. If no such blocks are found in a script, the step fails.
 
-Manual usage:
+Usage:
   python ci/run-doc-pages.py --plan plan.txt
 
 Environment:
@@ -19,14 +19,12 @@ Plan format:
 from __future__ import annotations
 
 import argparse
-import contextlib
 import os
 import re
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from subprocess import Popen
+from subprocess import run, CalledProcessError  # nosec B404
 
 # --------- CLI --------- #
 
@@ -40,41 +38,32 @@ def parse_args() -> argparse.Namespace:
     )
     return p.parse_args()
 
-
-# --------- Plan utilities --------- #
-
 def read_plan(plan_path: Path) -> list[Path]:
     if not plan_path.is_file():
         raise FileNotFoundError(f"Plan file not found: {plan_path}")
     raw = plan_path.read_text(encoding="utf-8", errors="ignore")
-    lines = raw.replace("\r\n", "\n").replace("\r", "\n").splitlines()
+    lines = plan_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     return [Path(p.strip()) for p in lines if p.strip() and not p.lstrip().startswith("#")]
-
 
 def require_files_exist(paths: list[Path]) -> None:
     missing = [str(p) for p in paths if not p.is_file()]
     if missing:
-        raise FileNotFoundError(
-            "Script(s) in plan not found:\n  - " + "\n  - ".join(missing)
-        )
-
-
-# --------- docs-exec block extraction --------- #
+        raise FileNotFoundError("Script(s) in plan not found:\n  - " + "\n  - ".join(missing))
 
 EXEC_BEGIN_RE = re.compile(r'^\s*#\s*\[docs-exec:([^\]]+)\]\s*$')
 EXEC_END_FMT = r'^\s*#\s*\[docs-exec:%s-end\]\s*$'
 
 @dataclass
 class ExtractedScript:
-    text: str
-    used_exec_blocks: bool
-    block_names: list[str]
+    text: str               # runnable bash text (with shebang + set -euo pipefail)
+    used_exec_blocks: bool  # whether any exec blocks were found
+    block_names: list[str]  # names of the blocks included
 
 def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
     """
     Parse script and concatenate all [docs-exec:<name>]...[docs-exec:<name>-end] blocks.
-    - If one or more exec blocks are found, returns a Bash script consisting of those blocks.
-    - If none found, returns a result indicating no blocks were used.
+    If one or more exec blocks are found, returns a Bash script consisting of those blocks.
+    Otherwise returns used_exec_blocks=False.
     """
     try:
         src_lines = script_path.read_text(encoding="utf-8", errors="ignore").splitlines(True)
@@ -110,45 +99,23 @@ def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
         return ExtractedScript(
             text=header + "\n".join(out_chunks),
             used_exec_blocks=True,
-            block_names=names
+            block_names=names,
         )
 
-    # No blocks found
     return ExtractedScript(text="", used_exec_blocks=False, block_names=[])
 
-
-def make_executable_copy(script: Path) -> tuple[Path, ExtractedScript]:
+def run_script_text(text: str, cwd: Path) -> int:
     """
-    Create a temp script to execute.
-    Returns (temp_path, extraction_details).
-    """
-    extraction = build_ci_text_from_exec_blocks(script)
-    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", suffix=".sh") as tmp:
-        tmp.write(extraction.text)
-        temp_path = Path(tmp.name)
-    os.chmod(temp_path, 0o755)  # optional
-    return temp_path, extraction
-
-# --------- Runner --------- #
-
-def run_script(script: Path) -> int:
-    """
-    Executes the script via bash, streaming its output and waiting for completion.
+    Execute the given bash text by piping it to bash's stdin.
     Returns the exit code.
     """
-    script = script.resolve()
-    cmd = ["bash", str(script)]
-
-    proc = Popen(
-        cmd,
-        cwd=script.parent,
-        preexec_fn=os.setsid,
-    )
-
-    return proc.wait()
-
-
-# --------- Main --------- #
+    try:
+        completed = run(  # nosec B603
+            ["bash"], input=text, text=True, cwd=str(cwd), check=False
+        )
+        return completed.returncode
+    except CalledProcessError as e:
+        return e.returncode
 
 def main() -> int:
     args = parse_args()
@@ -164,12 +131,13 @@ def main() -> int:
     print("\n--- Documentation Test Execution ---")
     print(f"Total steps: {len(scripts)}\n")
 
+    # Parse once and cache results of [docs-exec:*] extraction
+    extracted: list[tuple[Path, ExtractedScript]] = []
     print("[PLAN] Execution plan:")
-    plan_details: list[tuple[Path, ExtractedScript]] = []
     for i, script in enumerate(scripts, start=1):
-        extraction = build_ci_text_from_exec_blocks(script)
-        plan_details.append((script, extraction))
-        using = f"docs-exec: {', '.join(extraction.block_names)}" if extraction.used_exec_blocks else "NO docs-exec FOUND"
+        ex = build_ci_text_from_exec_blocks(script)
+        extracted.append((script, ex))
+        using = f"docs-exec: {', '.join(ex.block_names)}" if ex.used_exec_blocks else "NO docs-exec FOUND"
         print(f"  [{i:02d}] {script}  | {using}")
     print("")  # blank line
 
@@ -177,28 +145,19 @@ def main() -> int:
         print("[DRY RUN] Skipping execution per DOCS_DRY_RUN=1.")
         return 0
 
-    # Execute each plan item
-    for i, script in enumerate(scripts, start=1):
+    # Execute each plan item using cached extraction
+    for i, (script, ex) in enumerate(extracted, start=1):
         print(f"==> [Step {i}/{len(scripts)}] {script}")
 
-        prepared_path, extraction = make_executable_copy(script)
-
-        if not extraction.used_exec_blocks:
+        if not ex.used_exec_blocks:
             print(f"\n[run-doc-pages] FAILURE: No [docs-exec:*] blocks found in {script}.")
             print("    Each script in the plan must contain at least one executable docs block.")
-            with contextlib.suppress(OSError):
-                os.unlink(prepared_path)
-            return 1  # Return a non-zero exit code
+            return 1  # non-zero to fail the job
 
-        sect_disp = ", ".join(extraction.block_names)
+        sect_disp = ", ".join(ex.block_names)
         print(f"    using: docs-exec blocks -> {sect_disp}\n")
 
-        try:
-            rc = run_script(prepared_path)
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(prepared_path)
-
+        rc = run_script_text(ex.text, cwd=script.parent)
         if rc != 0:
             print(f"\n[run-doc-pages] FAILURE at step {i}: {script} executed with non-zero exit code ({rc})")
             return rc
@@ -207,7 +166,6 @@ def main() -> int:
 
     print("All steps in the execution plan completed successfully.")
     return 0
-
 
 if __name__ == "__main__":
     try:
