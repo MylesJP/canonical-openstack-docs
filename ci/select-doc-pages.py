@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 import sys
 from typing import Iterable, List
 
@@ -66,8 +67,10 @@ class ExecutionPlan:
         if not path.is_file():
             raise FileNotFoundError(f"Changed file list not found: {path}")
 
-        lines = path.read_text(encoding="utf-8").splitlines()
-        task_paths = [Path(p) for p in lines if p.strip().endswith(".task.sh")]
+        raw = path.read_text(encoding="utf-8", errors="ignore")
+        # Accept both newline- and whitespace-separated inputs, ignore comments
+        tokens = [t for t in re.split(r'\s+', raw.strip()) if t and not t.startswith('#')]
+        task_paths = [Path(t) for t in tokens if t.endswith(".task.sh")]
         unique_paths = list(dict.fromkeys(task_paths))
 
         return cls(scripts=unique_paths, repo_root=repo_root)
