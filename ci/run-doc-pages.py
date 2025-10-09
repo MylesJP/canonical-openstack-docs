@@ -26,8 +26,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from subprocess import run, CalledProcessError  # nosec B404
 
-# --------- CLI --------- #
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run docs snippet plan sequentially.")
     p.add_argument(
@@ -50,20 +48,20 @@ def require_files_exist(paths: list[Path]) -> None:
     if missing:
         raise FileNotFoundError("Script(s) in plan not found:\n  - " + "\n  - ".join(missing))
 
-EXEC_BEGIN_RE = re.compile(r'^\s*#\s*\[docs-exec:([^\]]+)\]\s*$')
-EXEC_END_FMT = r'^\s*#\s*\[docs-exec:%s-end\]\s*$'
+
+EXEC_START = re.compile(r'^\s*#\s*\[docs-exec:([^\]]+)\]\s*$')
+EXEC_END = r'^\s*#\s*\[docs-exec:%s-end\]\s*$'
 
 @dataclass
 class ExtractedScript:
-    text: str               # runnable bash text (with shebang + set -euo pipefail)
-    used_exec_blocks: bool  # whether any exec blocks were found
-    block_names: list[str]  # names of the blocks included
+    text: str
+    used_exec_blocks: bool
+    block_names: list[str]
 
 def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
     """
     Parse script and concatenate all [docs-exec:<name>]...[docs-exec:<name>-end] blocks.
-    If one or more exec blocks are found, returns a Bash script consisting of those blocks.
-    Otherwise returns used_exec_blocks=False.
+    Returns a bash script of all blocks if found.
     """
     try:
         src_lines = script_path.read_text(encoding="utf-8", errors="ignore").splitlines(True)
@@ -75,13 +73,13 @@ def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
 
     lines_iter = iter(src_lines)
     for line in lines_iter:
-        m = EXEC_BEGIN_RE.match(line)
+        m = EXEC_START.match(line)
         if not m:
             continue
 
         name = m.group(1).strip()
         names.append(name)
-        end_re = re.compile(EXEC_END_FMT % re.escape(name))
+        end_re = re.compile(EXEC_END % re.escape(name))
 
         block: list[str] = []
         for block_line in lines_iter:
@@ -89,12 +87,13 @@ def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
                 break
             block.append(block_line)
         else:
-            # loop exhausted: no end marker
+            # if no end marker
             print(f"Warning: missing [docs-exec:{name}-end] in {script_path}", file=sys.stderr)
 
         out_chunks.append("".join(block))
 
     if names:
+        # Add script header
         header = "#!/usr/bin/env bash\nset -euo pipefail\n"
         return ExtractedScript(
             text=header + "\n".join(out_chunks),

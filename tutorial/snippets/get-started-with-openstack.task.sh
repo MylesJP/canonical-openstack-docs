@@ -1,6 +1,3 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
 # [docs-view:installation]
 sudo snap install openstack
 # [docs-view:installation-end]
