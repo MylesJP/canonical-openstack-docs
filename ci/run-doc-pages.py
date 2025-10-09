@@ -22,9 +22,9 @@ import argparse
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from subprocess import run, CalledProcessError  # nosec B404
+from subprocess import run  # nosec B404
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run docs snippet plan sequentially.")
@@ -36,10 +36,10 @@ def parse_args() -> argparse.Namespace:
     )
     return p.parse_args()
 
+
 def read_plan(plan_path: Path) -> list[Path]:
     if not plan_path.is_file():
         raise FileNotFoundError(f"Plan file not found: {plan_path}")
-    raw = plan_path.read_text(encoding="utf-8", errors="ignore")
     lines = plan_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     return [Path(p.strip()) for p in lines if p.strip() and not p.lstrip().startswith("#")]
 
@@ -51,17 +51,18 @@ def require_files_exist(paths: list[Path]) -> None:
 
 EXEC_START = re.compile(r'^\s*#\s*\[docs-exec:([^\]]+)\]\s*$')
 EXEC_END = r'^\s*#\s*\[docs-exec:%s-end\]\s*$'
+HEADER = "#!/usr/bin/env bash\nset -euo pipefail\n"
 
 @dataclass
 class ExtractedScript:
     text: str
     used_exec_blocks: bool
     block_names: list[str]
+    errors: list[str] = field(default_factory=list)
 
 def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
     """
     Parse script and concatenate all [docs-exec:<name>]...[docs-exec:<name>-end] blocks.
-    Returns a bash script of all blocks if found.
     """
     try:
         src_lines = script_path.read_text(encoding="utf-8", errors="ignore").splitlines(True)
@@ -70,9 +71,10 @@ def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
 
     out_chunks: list[str] = []
     names: list[str] = []
+    errors: list[str] = []
 
-    lines_iter = iter(src_lines)
-    for line in lines_iter:
+    it = iter(src_lines)
+    for line in it:
         m = EXEC_START.match(line)
         if not m:
             continue
@@ -82,39 +84,38 @@ def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
         end_re = re.compile(EXEC_END % re.escape(name))
 
         block: list[str] = []
-        for block_line in lines_iter:
+        for block_line in it:
             if end_re.match(block_line):
                 break
             block.append(block_line)
         else:
-            # if no end marker
-            print(f"Warning: missing [docs-exec:{name}-end] in {script_path}", file=sys.stderr)
+            # reached EOF without matching -end → record error, skip this block
+            errors.append(f"Missing [docs-exec:{name}-end] in {script_path}")
+            continue
 
-        out_chunks.append("".join(block))
+        chunk = "".join(block)
+        if not chunk.endswith("\n"):
+            chunk += "\n"  # avoid gluing adjacent blocks
+        out_chunks.append(chunk)
 
     if names:
-        # Add script header
-        header = "#!/usr/bin/env bash\nset -euo pipefail\n"
         return ExtractedScript(
-            text=header + "\n".join(out_chunks),
+            text=HEADER + "".join(out_chunks),
             used_exec_blocks=True,
             block_names=names,
+            errors=errors,
         )
 
-    return ExtractedScript(text="", used_exec_blocks=False, block_names=[])
+    return ExtractedScript(text="", used_exec_blocks=False, block_names=[], errors=errors)
+
 
 def run_script_text(text: str, cwd: Path) -> int:
-    """
-    Execute the given bash text by piping it to bash's stdin.
-    Returns the exit code.
-    """
-    try:
-        completed = run(  # nosec B603
-            ["bash"], input=text, text=True, cwd=str(cwd), check=False
-        )
-        return completed.returncode
-    except CalledProcessError as e:
-        return e.returncode
+    """Execute bash by piping the given text to stdin."""
+    completed = run(  # nosec B603
+        ["bash"], input=text, text=True, cwd=str(cwd), check=False
+    )
+    return completed.returncode
+
 
 def main() -> int:
     args = parse_args()
@@ -130,28 +131,36 @@ def main() -> int:
     print("\n--- Documentation Test Execution ---")
     print(f"Total steps: {len(scripts)}\n")
 
-    # Parse once and cache results of [docs-exec:*] extraction
+    # Phase 1: Parse and validate all files in the plan
     extracted: list[tuple[Path, ExtractedScript]] = []
     print("[PLAN] Execution plan:")
+    had_structural_errors = False
     for i, script in enumerate(scripts, start=1):
         ex = build_ci_text_from_exec_blocks(script)
         extracted.append((script, ex))
         using = f"docs-exec: {', '.join(ex.block_names)}" if ex.used_exec_blocks else "NO docs-exec FOUND"
         print(f"  [{i:02d}] {script}  | {using}")
+        for err in ex.errors:
+            print(f"ERROR: {err}", file=sys.stderr)
+            had_structural_errors = True
     print("")  # blank line
+
+    if had_structural_errors:
+        print("[run-doc-pages] Aborting due to structural errors in docs-exec blocks.", file=sys.stderr)
+        return 1
 
     if dry_run:
         print("[DRY RUN] Skipping execution per DOCS_DRY_RUN=1.")
         return 0
 
-    # Execute each plan item using cached extraction
+    # Phase 2: Execute each valid plan item
     for i, (script, ex) in enumerate(extracted, start=1):
         print(f"==> [Step {i}/{len(scripts)}] {script}")
 
         if not ex.used_exec_blocks:
             print(f"\n[run-doc-pages] FAILURE: No [docs-exec:*] blocks found in {script}.")
             print("    Each script in the plan must contain at least one executable docs block.")
-            return 1  # non-zero to fail the job
+            return 1
 
         sect_disp = ", ".join(ex.block_names)
         print(f"    using: docs-exec blocks -> {sect_disp}\n")
