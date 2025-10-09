@@ -35,7 +35,6 @@ env:
   CI: "true"
   PYTHONUNBUFFERED: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PRINT_PLAN: "1"     # force executor to *only* print what it would run
   DOCS_DRY_RUN: "1"   # guard to disable the real execution step
 
 jobs:
@@ -160,7 +159,6 @@ jobs:
 
       - name: Dry-run plan printout
         run: |
-          # PRINT_PLAN=1 globally ensures this just prints
           python ci/run-doc-pages.py --plan plan.txt || true
 
       - name: Execute plan

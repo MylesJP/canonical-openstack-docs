@@ -10,7 +10,7 @@ Manual usage:
   python ci/run-doc-pages.py --plan plan.txt
 
 Environment:
-  PRINT_PLAN=1   -> Print what would run without executing.
+  DOCS_DRY_RUN=1   -> Print the plan and validate blocks, but do not execute.
 
 Plan format:
   Newline-delimited file where each line is a path to a *.task.sh script.
@@ -159,19 +159,25 @@ def main() -> int:
         return 0
 
     require_files_exist(scripts)
-    dry_run = os.environ.get("PRINT_PLAN") == "1"
+    dry_run = os.environ.get("DOCS_DRY_RUN") == "1"
 
     print("\n--- Documentation Test Execution ---")
     print(f"Total steps: {len(scripts)}\n")
 
+    print("[PLAN] Execution plan:")
+    plan_details: list[tuple[Path, ExtractedScript]] = []
+    for i, script in enumerate(scripts, start=1):
+        extraction = build_ci_text_from_exec_blocks(script)
+        plan_details.append((script, extraction))
+        using = f"docs-exec: {', '.join(extraction.block_names)}" if extraction.used_exec_blocks else "NO docs-exec FOUND"
+        print(f"  [{i:02d}] {script}  | {using}")
+    print("")  # blank line
+
     if dry_run:
-        print("[DRY RUN] Execution plan:")
-        for i, script in enumerate(scripts, start=1):
-            extraction = build_ci_text_from_exec_blocks(script)
-            using = f"docs-exec: {', '.join(extraction.block_names)}" if extraction.used_exec_blocks else "NO docs-exec FOUND"
-            print(f"  [{i:02d}] {script}  | {using}")
+        print("[DRY RUN] Skipping execution per DOCS_DRY_RUN=1.")
         return 0
 
+    # Execute each plan item
     for i, script in enumerate(scripts, start=1):
         print(f"==> [Step {i}/{len(scripts)}] {script}")
 
@@ -182,7 +188,7 @@ def main() -> int:
             print("    Each script in the plan must contain at least one executable docs block.")
             with contextlib.suppress(OSError):
                 os.unlink(prepared_path)
-            return 1 # Return a non-zero exit code
+            return 1  # Return a non-zero exit code
 
         sect_disp = ", ".join(extraction.block_names)
         print(f"    using: docs-exec blocks -> {sect_disp}\n")
