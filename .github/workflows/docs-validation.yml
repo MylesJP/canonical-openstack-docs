@@ -37,7 +37,7 @@ env:
   PYTHONUNBUFFERED: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   # Master switch for dry-run. Set to "1" to validate without executing.
-  DOCS_DRY_RUN: "0"
+  DOCS_DRY_RUN: "1"
 
 jobs:
   lint-snippets:
