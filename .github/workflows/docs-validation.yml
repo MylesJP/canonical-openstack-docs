@@ -35,7 +35,7 @@ env:
   CI: "true"
   PYTHONUNBUFFERED: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  DOCS_DRY_RUN: "1"   # guard to disable the real execution step
+  DOCS_DRY_RUN: "0"   # guard to disable the real execution step
 
 jobs:
   lint-snippets:
