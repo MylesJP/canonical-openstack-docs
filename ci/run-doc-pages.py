@@ -10,7 +10,7 @@ Usage:
   python ci/run-doc-pages.py --plan plan.txt
 
 Environment:
-  DOCS_DRY_RUN=1   -> Print the plan and validate blocks, but do not execute.
+  DOCS_DRY_RUN=1   -> Print the plan, show the extracted bash, and skip execution.
 
 Plan format:
   Newline-delimited file where each line is a path to a *.task.sh script.
@@ -25,6 +25,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from subprocess import run  # nosec B404
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run docs snippet plan sequentially.")
@@ -43,6 +44,7 @@ def read_plan(plan_path: Path) -> list[Path]:
     lines = plan_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     return [Path(p.strip()) for p in lines if p.strip() and not p.lstrip().startswith("#")]
 
+
 def require_files_exist(paths: list[Path]) -> None:
     missing = [str(p) for p in paths if not p.is_file()]
     if missing:
@@ -53,6 +55,7 @@ EXEC_START = re.compile(r'^\s*#\s*\[docs-exec:([^\]]+)\]\s*$')
 EXEC_END = r'^\s*#\s*\[docs-exec:%s-end\]\s*$'
 HEADER = "#!/usr/bin/env bash\nset -euo pipefail\n"
 
+
 @dataclass
 class ExtractedScript:
     text: str
@@ -60,10 +63,9 @@ class ExtractedScript:
     block_names: list[str]
     errors: list[str] = field(default_factory=list)
 
+
 def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
-    """
-    Parse script and concatenate all [docs-exec:<name>]...[docs-exec:<name>-end] blocks.
-    """
+    """Parse script and concatenate all [docs-exec:<name>]...[docs-exec:<name>-end] blocks."""
     try:
         src_lines = script_path.read_text(encoding="utf-8", errors="ignore").splitlines(True)
     except OSError as e:
@@ -89,13 +91,12 @@ def build_ci_text_from_exec_blocks(script_path: Path) -> ExtractedScript:
                 break
             block.append(block_line)
         else:
-            # reached EOF without matching -end → record error, skip this block
             errors.append(f"Missing [docs-exec:{name}-end] in {script_path}")
             continue
 
         chunk = "".join(block)
         if not chunk.endswith("\n"):
-            chunk += "\n"  # avoid gluing adjacent blocks
+            chunk += "\n"
         out_chunks.append(chunk)
 
     if names:
@@ -131,7 +132,7 @@ def main() -> int:
     print("\n--- Documentation Test Execution ---")
     print(f"Total steps: {len(scripts)}\n")
 
-    # Phase 1: Parse and validate all files in the plan
+    # Parse and validate all files
     extracted: list[tuple[Path, ExtractedScript]] = []
     print("[PLAN] Execution plan:")
     had_structural_errors = False
@@ -143,23 +144,30 @@ def main() -> int:
         for err in ex.errors:
             print(f"ERROR: {err}", file=sys.stderr)
             had_structural_errors = True
-    print("")  # blank line
+    print("")
 
     if had_structural_errors:
         print("[run-doc-pages] Aborting due to structural errors in docs-exec blocks.", file=sys.stderr)
         return 1
 
     if dry_run:
-        print("[DRY RUN] Skipping execution per DOCS_DRY_RUN=1.")
+        print("[DRY RUN] Printing all assembled scripts (no execution):\n")
+        for i, (script, ex) in enumerate(extracted, start=1):
+            print(f"----- BEGIN SCRIPT [{i}] {script} -----")
+            if ex.used_exec_blocks:
+                sys.stdout.write(ex.text)
+            else:
+                print("# (no [docs-exec:*] blocks found)")
+            print(f"----- END SCRIPT [{i}] {script} -----\n")
+        print("[DRY RUN] Completed printing scripts. Nothing executed.")
         return 0
 
-    # Phase 2: Execute each valid plan item
+    # Actual execution
     for i, (script, ex) in enumerate(extracted, start=1):
         print(f"==> [Step {i}/{len(scripts)}] {script}")
 
         if not ex.used_exec_blocks:
             print(f"\n[run-doc-pages] FAILURE: No [docs-exec:*] blocks found in {script}.")
-            print("    Each script in the plan must contain at least one executable docs block.")
             return 1
 
         sect_disp = ", ".join(ex.block_names)
@@ -167,13 +175,14 @@ def main() -> int:
 
         rc = run_script_text(ex.text, cwd=script.parent)
         if rc != 0:
-            print(f"\n[run-doc-pages] FAILURE at step {i}: {script} executed with non-zero exit code ({rc})")
+            print(f"\n[run-doc-pages] FAILURE at step {i}: {script} exited with code {rc}")
             return rc
 
         print(f"\n--- [Step {i}/{len(scripts)}] SUCCESS: {script} ---\n")
 
     print("All steps in the execution plan completed successfully.")
     return 0
+
 
 if __name__ == "__main__":
     try:

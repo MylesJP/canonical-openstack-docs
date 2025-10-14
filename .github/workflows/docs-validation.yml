@@ -5,19 +5,15 @@ on:
     branches:
       - main
       - docs-testing
-    # Add how-tos later
     paths:
       - "tutorial/**/*.task.sh"
-      - "ci/**"
-      - ".github/workflows/docs-validation.yml"
+      - "how-to/**/*.task.sh"
   pull_request:
     branches:
       - main
-    # Add how-tos later
     paths:
       - "tutorial/**/*.task.sh"
-      - "ci/**"
-      - ".github/workflows/docs-validation.yml"
+      - "how-to/**/*.task.sh"
   # Manual trigger
   workflow_dispatch:
 
@@ -36,7 +32,7 @@ env:
   CI: "true"
   PYTHONUNBUFFERED: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  # Master switch for dry-run. Set to "1" to validate without executing.
+  # Dry-run switch. Set to "1" to print without executing.
   DOCS_DRY_RUN: "1"
 
 jobs:
@@ -60,7 +56,6 @@ jobs:
             if [[ "$COUNT" -gt 0 ]]; then
               echo "**Found $COUNT snippet files:**"
               echo '<ul>'
-              # Convert nulls to newlines just for the summary
               tr '\0' '\n' < all_snippets.null | sed 's/^/<li>/' | sed 's/$/<\/li>/'
               echo '</ul>'
             else
@@ -81,7 +76,6 @@ jobs:
       - name: Lint with bashate (ignore long lines)
         if: steps.discover.outputs.count != '0'
         run: |
-          # -r: do nothing if input is empty
           xargs -0 -r bashate -i E006 < all_snippets.null
 
   plan-and-run:
@@ -105,7 +99,6 @@ jobs:
 
       - name: Write changed list to file
         id: write-changed
-        # Only run this step if there are actually changed files
         if: steps.changed.outputs.all_changed_files != ''
         run: |
           printf '%s\n' "${{ steps.changed.outputs.all_changed_files }}" > changed_snippets.txt
@@ -164,7 +157,6 @@ jobs:
         if: env.DOCS_DRY_RUN == '1' && steps.plan.outputs.count != '0'
         run: |
           echo "Executing dry-run validation of the plan..."
-          # The script always prints the plan and respects DOCS_DRY_RUN=1 to skip execution
           python ci/run-doc-pages.py --plan plan.txt
 
       - name: Execute plan
@@ -181,3 +173,4 @@ jobs:
             plan.txt
             changed_snippets.txt
             run.log
+          if-no-files-found: ignore
