@@ -1,3 +1,5 @@
+# @depends: snippets/get-started-with-openstack.task.sh
+
 # [docs-view:enable-caas]
 sunbeam enable caas
 # [docs-view:enable-caas-end]

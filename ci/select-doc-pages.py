@@ -38,7 +38,7 @@ class ExecutionPlan:
     """Represents the set of scripts to be executed."""
     scripts: List[Path] = field(default_factory=list)
     repo_root: Path = Path(".")
-    _depends_re = re.compile(r"^\s*#\s*@depends\s+(.+?)\s*$")
+    _depends_re = re.compile(r"^\s*#\s*@depends:\s+(.+?)\s*$")
 
     @classmethod
     def from_changed_files(cls, path: Path, repo_root: Path) -> "ExecutionPlan":
