@@ -46,22 +46,11 @@ jobs:
       - name: Discover snippet files
         id: discover
         run: |
-          find tutorial how-to -type f -name '*.task.sh' -print0 2>/dev/null > all_snippets.null
-          COUNT=$(tr -cd '\0' < all_snippets.null | wc -c)
+          mapfile -d '' SNIPS < <(find tutorial how-to -type f -name '*.task.sh' -print0 2>/dev/null || true)
+          printf '%s\0' "${SNIPS[@]}" > all_snippets.null || true
+          tr '\0' '\n' < all_snippets.null > all_snippets.txt || true
+          COUNT=$(wc -l < all_snippets.txt | tr -d ' ')
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
-
-          {
-            echo "### Lint target discovery"
-            echo
-            if [[ "$COUNT" -gt 0 ]]; then
-              echo "**Found $COUNT snippet files:**"
-              echo '<ul>'
-              tr '\0' '\n' < all_snippets.null | sed 's/^/<li>/' | sed 's/$/<\/li>/'
-              echo '</ul>'
-            else
-              echo "_No snippet files found._"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python (for bashate)
         if: steps.discover.outputs.count != '0'

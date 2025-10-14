@@ -5,17 +5,9 @@ Builds an ordered execution plan of snippet scripts to run for docs CI.
 Usage:
   python ci/select-doc-pages.py --changed-file-list changed.txt --out plan.txt [--repo-root .]
 
-Environment: (none)
-
-Input format:
-  Newline-delimited file where each line is a path (relative or absolute).
-  Lines starting with '#' and empty lines are ignored.
-  Only files ending with '.task.sh' are selected.
-
 Dependency additions:
   In any *.task.sh file, add lines like:
       # @depends tutorial/snippets/get-started-with-openstack.task.sh
-  This is useful for features that require a sunbeam installation to use.
 """
 from __future__ import annotations
 
@@ -26,32 +18,15 @@ import re
 import sys
 from typing import List
 
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Select doc snippet pages to run.")
-    p.add_argument(
-        "--changed-file-list",
-        required=True,
-        type=Path,
-        help="Path to a newline-delimited file of changed files.",
-    )
-    p.add_argument(
-        "--out",
-        required=True,
-        type=Path,
-        help="Path to write the newline-delimited execution plan.",
-    )
-    p.add_argument(
-        "--repo-root",
-        default=".",
-        type=Path,
-        help="Optional repository root (for nicer logging); default='.'.",
-    )
+    p.add_argument("--changed-file-list", required=True, type=Path)
+    p.add_argument("--out", required=True, type=Path)
+    p.add_argument("--repo-root", default=".", type=Path)
     return p.parse_args()
 
 
 def normalize_path(path: Path, repo_root: Path) -> str:
-    """Normalize a path to be repo-relative and use POSIX separators."""
     try:
         return path.resolve().relative_to(repo_root.resolve()).as_posix()
     except ValueError:
@@ -63,6 +38,7 @@ class ExecutionPlan:
     """Represents the set of scripts to be executed."""
     scripts: List[Path] = field(default_factory=list)
     repo_root: Path = Path(".")
+    _depends_re = re.compile(r"^\s*#\s*@depends\s+(.+?)\s*$")
 
     @classmethod
     def from_changed_files(cls, path: Path, repo_root: Path) -> "ExecutionPlan":
@@ -70,13 +46,15 @@ class ExecutionPlan:
         if not path.is_file():
             raise FileNotFoundError(f"Changed file list not found: {path}")
 
-        raw = path.read_text(encoding="utf-8", errors="ignore")
-        # Accept both newline- and whitespace-separated inputs, ignore comments
-        tokens = [t for t in re.split(r"\s+", raw.strip()) if t and not t.startswith("#")]
-        task_paths = [Path(t) for t in tokens if t.endswith(".task.sh")]
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        # Filter comments and empty lines
+        task_strings = [
+            ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")
+        ]
+        task_paths = [Path(p) for p in task_strings if p.endswith(".task.sh")]
+
         # Preserve order, drop duplicates
         unique_paths = list(dict.fromkeys(task_paths))
-
         return cls(scripts=unique_paths, repo_root=repo_root)
 
     def validate_paths_exist(self) -> None:
@@ -86,27 +64,17 @@ class ExecutionPlan:
             joined = "\n  - ".join(missing)
             raise FileNotFoundError(f"The following snippet files do not exist:\n  - {joined}")
 
-
-    _depends_re = re.compile(r"^\s*#\s*@depends\s+(.+?)\s*$")
-
-    def _resolve_dep(self, raw: str, script: Path) -> Path:
-        """Resolve a dependency path:
-           - '/...'        => absolute
-           - './...' or '../...' => relative to script directory
-           - otherwise     => relative to repo root
-        """
-        s = raw.strip().strip("'").strip('"')
+    def _resolve_dep(self, raw_dep: str, relative_to: Path) -> Path:
+        """Resolve a dependency path based on its format."""
+        s = raw_dep.strip().strip("'\"")
         if s.startswith("/"):
-            return Path(s).resolve()
+            return Path(s)
         if s.startswith("./") or s.startswith("../"):
-            return (script.parent / s).resolve()
-        return (self.repo_root / s).resolve()
+            return relative_to.parent / s
+        return self.repo_root / s
 
     def _parse_direct_depends(self, script: Path) -> List[Path]:
-        """
-        Parse direct dependency lines from a snippet script (one level only).
-        Each line format: '# @depends path/to/other.task.sh'
-        """
+        """Parse '# @depends' lines from a single script file."""
         try:
             text = script.read_text(encoding="utf-8", errors="ignore")
         except FileNotFoundError:
@@ -114,52 +82,45 @@ class ExecutionPlan:
 
         deps: List[Path] = []
         for line in text.splitlines():
-            m = self._depends_re.match(line)
-            if not m:
-                continue
-            raw = m.group(1)
-            # Only consider *.task.sh deps
-            if not raw.strip().strip("'").strip('"').endswith(".task.sh"):
-                continue
-            dep_path = self._resolve_dep(raw, script)
-            deps.append(dep_path)
+            if m := self._depends_re.match(line):
+                raw = m.group(1)
+                # Only consider *.task.sh dependencies
+                if raw.strip().strip("'\"").endswith(".task.sh"):
+                    deps.append(self._resolve_dep(raw, relative_to=script))
 
-        # Preserve declared order, drop duplicates
-        return list(dict.fromkeys(deps))
-
+        return list(dict.fromkeys(deps)) # De-dupe deps from same file
 
     def expand_dependencies(self) -> None:
         """
-        Insert direct dependencies before each script (no recursion).
-        Final order example:
-          depA, depB, script1, depC, script2, ...
-        De-duplicated while preserving first occurrence.
+        Rebuilds the script list, inserting direct dependencies before each script.
+        The final list is de-duplicated, preserving the first occurrence.
         """
-        ordered: List[Path] = []
-        seen: set[Path] = set()
-
+        expanded_list: List[Path] = []
         for script in self.scripts:
-            s_abs = script.resolve()
+            # Add dependencies first, then the script itself
+            expanded_list.extend(self._parse_direct_depends(script))
+            expanded_list.append(script)
 
-            # Insert direct deps first (one level only)
-            for dep in self._parse_direct_depends(s_abs):
-                d = dep.resolve()
-                if d not in seen:
-                    seen.add(d)
-                    ordered.append(d)
-
-            # Then the script itself
-            if s_abs not in seen:
-                seen.add(s_abs)
-                ordered.append(s_abs)
-
-        self.scripts = ordered
+        self.scripts = list(dict.fromkeys(expanded_list))
 
     def write(self, out_path: Path) -> None:
         """Write the final, normalized plan to a file."""
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        normalized_paths = [normalize_path(p, self.repo_root) for p in self.scripts]
+        # Resolve all paths to be absolute
+        resolved_scripts = [p.resolve() for p in self.scripts]
+        normalized_paths = [normalize_path(p, self.repo_root) for p in resolved_scripts]
         out_path.write_text("\n".join(normalized_paths) + "\n", encoding="utf-8")
+
+    def print_summary(self) -> None:
+        """Prints the final plan to stderr for CI logs."""
+        print("Execution plan:", file=sys.stderr)
+        resolved_scripts = [p.resolve() for p in self.scripts]
+        normalized_paths = [normalize_path(p, self.repo_root) for p in resolved_scripts]
+        if not normalized_paths:
+            print("  (empty)", file=sys.stderr)
+            return
+        for i, p in enumerate(normalized_paths, 1):
+            print(f"  [{i:02d}] {p}", file=sys.stderr)
 
 
 def main() -> int:
@@ -169,22 +130,27 @@ def main() -> int:
         plan = ExecutionPlan.from_changed_files(
             path=args.changed_file_list, repo_root=args.repo_root
         )
-    except FileNotFoundError:
-        raise
-    except Exception:
-        plan = ExecutionPlan(repo_root=args.repo_root)
+    except FileNotFoundError as e:
+        print(f"[select-doc-pages] ERROR: {e}", file=sys.stderr)
+        return 2
 
     if not plan.scripts:
         print("No *.task.sh files changed; writing empty plan.", file=sys.stderr)
         plan.write(args.out)
         return 0
 
-    # Validate the changed files we were given, then expand one-level deps,
-    # then validate again to catch missing dependency files.
+    # Validate initial changed files
     plan.validate_paths_exist()
+
+    # Expand with dependencies
     plan.expand_dependencies()
+
+    # Check paths to ensure all dependencies exist on disk
     plan.validate_paths_exist()
+
     plan.write(args.out)
+    plan.print_summary()  # CI summary output
+
     return 0
 
 
@@ -193,4 +159,4 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception as exc:
         print(f"[select-doc-pages] ERROR: {exc}", file=sys.stderr)
-        sys.exit(2)
+        sys.exit(1)

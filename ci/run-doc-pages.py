@@ -46,9 +46,10 @@ def read_plan(plan_path: Path) -> list[Path]:
 
 
 def require_files_exist(paths: list[Path]) -> None:
-    missing = [str(p) for p in paths if not p.is_file()]
+    missing = [str(p.resolve()) for p in paths if not p.resolve().is_file()]
     if missing:
         raise FileNotFoundError("Script(s) in plan not found:\n  - " + "\n  - ".join(missing))
+
 
 
 EXEC_START = re.compile(r'^\s*#\s*\[docs-exec:([^\]]+)\]\s*$')
@@ -132,7 +133,7 @@ def main() -> int:
     print("\n--- Documentation Test Execution ---")
     print(f"Total steps: {len(scripts)}\n")
 
-    # Parse and validate all files
+    # Phase 1: Parse and validate all files
     extracted: list[tuple[Path, ExtractedScript]] = []
     print("[PLAN] Execution plan:")
     had_structural_errors = False
@@ -150,6 +151,7 @@ def main() -> int:
         print("[run-doc-pages] Aborting due to structural errors in docs-exec blocks.", file=sys.stderr)
         return 1
 
+    # Phase 2: Process the validated plan
     if dry_run:
         print("[DRY RUN] Printing all assembled scripts (no execution):\n")
         for i, (script, ex) in enumerate(extracted, start=1):
@@ -157,12 +159,11 @@ def main() -> int:
             if ex.used_exec_blocks:
                 sys.stdout.write(ex.text)
             else:
-                print("# (no [docs-exec:*] blocks found)")
+                print("# (no [docs-exec:*] blocks found - this would fail in a real run)")
             print(f"----- END SCRIPT [{i}] {script} -----\n")
         print("[DRY RUN] Completed printing scripts. Nothing executed.")
         return 0
 
-    # Actual execution
     for i, (script, ex) in enumerate(extracted, start=1):
         print(f"==> [Step {i}/{len(scripts)}] {script}")
 
@@ -190,6 +191,11 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n[run-doc-pages] Interrupted by user.", file=sys.stderr)
         sys.exit(130)
-    except Exception as exc:
-        print(f"[run-doc-pages] ERROR: {exc}", file=sys.stderr)
+    except FileNotFoundError as e:
+        # Configuration error (e.g., plan file not found)
+        print(f"[run-doc-pages] CONFIGURATION ERROR: {e}", file=sys.stderr)
         sys.exit(2)
+    except Exception as exc:
+        # Unexpected runtime error
+        print(f"[run-doc-pages] UNEXPECTED ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
