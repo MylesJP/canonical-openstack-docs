@@ -11,18 +11,20 @@ Enabling LDAP
 
 To enable the LDAP feature, run the following command:
 
-::
-
-   sunbeam enable ldap
+.. literalinclude:: ../snippets/ldap.task.sh
+   :language: bash
+   :start-after: [docs-view:enable-ldap]
+   :end-before:  [docs-view:enable-ldap-end]
 
 Disabling LDAP
 --------------
 
 To disable the LDAP feature, run the following command:
 
-::
-
-   sunbeam disable ldap
+.. literalinclude:: ../snippets/ldap.task.sh
+   :language: bash
+   :start-after: [docs-view:disable-ldap]
+   :end-before:  [docs-view:disable-ldap-end]
 
 Usage
 -----

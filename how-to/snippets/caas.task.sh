@@ -8,6 +8,7 @@ sunbeam enable caas
 sg snap_daemon 'sunbeam enable caas'
 # [docs-exec:enable-caas-end]
 
+
 # [docs-view:disable-caas]
 sunbeam disable caas
 # [docs-view:disable-caas-end]
