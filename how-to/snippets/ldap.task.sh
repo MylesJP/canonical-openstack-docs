@@ -38,3 +38,5 @@ sunbeam ldap list-domains
 # [docs-view:ldap-remove]
 sunbeam ldap remove-domain '<domain-name>'
 # [docs-view:ldap-remove-end]
+
+# Trigger a CI run

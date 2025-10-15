@@ -201,4 +201,3 @@ if __name__ == "__main__":
         # Unexpected runtime error
         print(f"[run-doc-pages] UNEXPECTED ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
-# Test comment to trigger a CI run
