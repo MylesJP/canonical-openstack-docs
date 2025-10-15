@@ -75,7 +75,7 @@ class ExecutionPlan:
         return (self.repo_root / s).resolve()
 
     def _parse_direct_depends(self, script: Path) -> List[Path]:
-        """Parse '# @depends' lines from a single script file."""
+        """Parse '# @depends:' lines from a single script file."""
         try:
             text = script.read_text(encoding="utf-8", errors="ignore")
         except FileNotFoundError:
@@ -98,7 +98,7 @@ class ExecutionPlan:
         """
         expanded_list: List[Path] = []
         for script in self.scripts:
-            # Add dependencies first, then the script itself
+            # Add dependencies first, then the script
             expanded_list.extend(self._parse_direct_depends(script))
             expanded_list.append(script)
 
@@ -139,7 +139,6 @@ def main() -> int:
     plan.validate_paths_exist()
 
     plan.write(args.out)
-    # plan.print_summary()  # CI summary output
 
     return 0
 
