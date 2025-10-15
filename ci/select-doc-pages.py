@@ -51,7 +51,8 @@ class ExecutionPlan:
         task_strings = [
             ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")
         ]
-        task_paths = [Path(p) for p in task_strings if p.endswith(".task.sh")]
+        # Treat each changed entry as repo-relative and resolve to absolute
+        task_paths = [(repo_root / Path(p)).resolve() for p in task_strings if p.endswith(".task.sh")]
 
         # Preserve order, drop duplicates
         unique_paths = list(dict.fromkeys(task_paths))
@@ -68,10 +69,10 @@ class ExecutionPlan:
         """Resolve a dependency path based on its format."""
         s = raw_dep.strip().strip("'\"")
         if s.startswith("/"):
-            return Path(s)
+            return Path(s).resolve()
         if s.startswith("./") or s.startswith("../"):
-            return relative_to.parent / s
-        return self.repo_root / s
+            return (relative_to.parent / s).resolve()
+        return (self.repo_root / s).resolve()
 
     def _parse_direct_depends(self, script: Path) -> List[Path]:
         """Parse '# @depends' lines from a single script file."""

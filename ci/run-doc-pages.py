@@ -159,29 +159,31 @@ def main() -> int:
             if ex.used_exec_blocks:
                 sys.stdout.write(ex.text)
             else:
-                print("# (no [docs-exec:*] blocks found - this would fail in a real run)")
+                print("# (no [docs-exec:*] blocks found - this would be skipped in a real run)")
             print(f"----- END SCRIPT [{i}] {script} -----\n")
+
         print("[DRY RUN] Completed printing scripts. Nothing executed.")
-        return 0
+    else:
+        for i, (script, ex) in enumerate(extracted, start=1):
+            print(f"==> [Step {i}/{len(scripts)}] {script}")
 
-    for i, (script, ex) in enumerate(extracted, start=1):
-        print(f"==> [Step {i}/{len(scripts)}] {script}")
+            if not ex.used_exec_blocks:
+                print("    -> No [docs-exec:*] blocks found. Skipping execution for this file.")
+                print(f"\n--- [Step {i}/{len(scripts)}] SKIPPED: {script} ---\n")
+                continue  # Move to the next script in the plan
 
-        if not ex.used_exec_blocks:
-            print(f"\n[run-doc-pages] FAILURE: No [docs-exec:*] blocks found in {script}.")
-            return 1
+            sect_disp = ", ".join(ex.block_names)
+            print(f"    using: docs-exec blocks -> {sect_disp}\n")
 
-        sect_disp = ", ".join(ex.block_names)
-        print(f"    using: docs-exec blocks -> {sect_disp}\n")
+            rc = run_script_text(ex.text, cwd=script.parent)
+            if rc != 0:
+                print(f"\n[run-doc-pages] FAILURE at step {i}: {script} exited with code {rc}")
+                return rc
 
-        rc = run_script_text(ex.text, cwd=script.parent)
-        if rc != 0:
-            print(f"\n[run-doc-pages] FAILURE at step {i}: {script} exited with code {rc}")
-            return rc
+            print(f"\n--- [Step {i}/{len(scripts)}] SUCCESS: {script} ---\n")
 
-        print(f"\n--- [Step {i}/{len(scripts)}] SUCCESS: {script} ---\n")
+        print("All steps in the execution plan completed successfully.")
 
-    print("All steps in the execution plan completed successfully.")
     return 0
 
 
