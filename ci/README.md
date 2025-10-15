@@ -1,8 +1,12 @@
+---
+orphan: true
+---
+
 # Documentation Testing Framework
 
 ## Purpose
 
-The goal is to ensure that every command shown in our documentation actually works.
+The goal is to ensure that every command shown in our documentation matches the software.
 Each tutorial or how-to snippet contains **both display and execution blocks**:
 
 - `[docs-view:<name>]` — what appears in the rendered documentation (human-readable example)
@@ -37,11 +41,11 @@ sg snap_daemon 'sunbeam enable secrets'
 ```
 
 > The `docs-view` block is what appears in the docs.
-> The `docs-exec` block is what actually runs — but they usually mirror each other closely.
+> The `docs-exec` block is what actually runs — but they should mirror each other closely.
 
 ## Creating or Editing a Snippet
 
-Create a new file like `how-to/snippets/my-feature.task.sh`:
+Create a new file like `how-to/snippets/secrets.task.sh`:
 
 
 ```bash
@@ -81,7 +85,7 @@ To include a `docs-view` block in the rendered documentation, use `literalinclud
 ```
 
 **Tips**
-- Always point to your `*.task.sh` file in `snippets/`.
+- Always point to your `*.task.sh` file in the appropriate `snippets/` directory.
 - Make sure your markers (`[docs-view:NAME]` and `[docs-view:NAME-end]`) match exactly.
 - Sphinx will automatically include only the lines between those markers.
 
@@ -89,7 +93,7 @@ To include a `docs-view` block in the rendered documentation, use `literalinclud
 
 ## Declaring Dependencies
 
-If one snippet must run after another (e.g., a feature enable depends on cluster bootstrap), add a `# @depends:` line near the top:
+If one snippet must run after another (e.g., a feature enable depends on sunbeam being deployed), add a `# @depends:` line near the top pointing to the prerequisite `*.task.sh` script:
 
 ```bash
 # @depends: tutorial/snippets/get-started-with-openstack.task.sh
@@ -148,5 +152,3 @@ openssl req -x509 -nodes -newkey rsa:2048 \
 ```
 
 These commands will appear in the printed (or executed) plan just like any other snippet.
-
----
