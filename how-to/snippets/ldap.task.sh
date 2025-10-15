@@ -16,3 +16,25 @@ sunbeam disable ldap
 # [docs-exec:disable-ldap]
 sg snap_daemon 'sunbeam disable ldap'
 # [docs-exec:disable-ldap-end]
+
+
+# [docs-view:ldap-add]
+sunbeam ldap add-domain \
+    --domain-config-file ./dom1.yaml \
+    --ca-cert-file ./dom1.cert dom1
+# [docs-view:ldap-add-end]
+
+
+# [docs-view:ldap-update]
+sunbeam ldap update-domain --domain-config-file ./dom1.yaml --ca-cert-file ./dom1.cert  dom1
+# [docs-view:ldap-update-end]
+
+
+# [docs-view:ldap-list]
+sunbeam ldap list-domains
+# [docs-view:ldap-list-end]
+
+
+# [docs-view:ldap-remove]
+sunbeam ldap remove-domain <domain-name>
+# [docs-view:ldap-remove-end]
