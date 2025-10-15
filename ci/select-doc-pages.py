@@ -112,17 +112,6 @@ class ExecutionPlan:
         normalized_paths = [normalize_path(p, self.repo_root) for p in resolved_scripts]
         out_path.write_text("\n".join(normalized_paths) + "\n", encoding="utf-8")
 
-    def print_summary(self) -> None:
-        """Prints the final plan to stderr for CI logs."""
-        print("Execution plan:", file=sys.stderr)
-        resolved_scripts = [p.resolve() for p in self.scripts]
-        normalized_paths = [normalize_path(p, self.repo_root) for p in resolved_scripts]
-        if not normalized_paths:
-            print("  (empty)", file=sys.stderr)
-            return
-        for i, p in enumerate(normalized_paths, 1):
-            print(f"  [{i:02d}] {p}", file=sys.stderr)
-
 
 def main() -> int:
     args = parse_args()
@@ -150,7 +139,7 @@ def main() -> int:
     plan.validate_paths_exist()
 
     plan.write(args.out)
-    plan.print_summary()  # CI summary output
+    # plan.print_summary()  # CI summary output
 
     return 0
 
